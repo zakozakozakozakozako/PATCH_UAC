@@ -7,46 +7,75 @@ on:
         description: "Git 仓库地址"
         required: true
         default: "https://github.com/cctv18/android_kernel_oneplus_mt6989.git"
+
       COMMIT_HASH:
-        description: "要导出的 Commit 哈希值"
+        description: "要导出的 Commit（多个用 / 分隔，按顺序 A/B/C）"
         required: true
+
       PATCH_NAME:
         description: "输出补丁文件名"
         required: true
-        default: "fengchi_scx.patch"
+        default: "output.patch"
+
       REVERSE:
         description: "是否生成反向补丁"
-        required: true
         type: boolean
+        required: true
         default: false
+
       CLEAN_HEADER:
         description: "是否删除补丁中的 commit 头部信息"
-        required: true
         type: boolean
+        required: true
         default: true
 
 jobs:
   gen-patch:
     runs-on: ubuntu-latest
+
     steps:
-      - name: ✅ 克隆仓库
+      - name: 📥 克隆仓库
         run: |
           git clone ${{ github.event.inputs.REPO_URL }} repo
           cd repo
-          git fetch --all
+          git fetch --all --tags
 
-      - name: 📌 生成补丁
+      - name: 📌 按顺序生成补丁 (A → B → C)
         run: |
           cd repo
-          if [ "${{ github.event.inputs.REVERSE }}" = true ]; then
-            echo "正在生成反向补丁..."
-            git show -R ${{ github.event.inputs.COMMIT_HASH }} --no-commit-id -p > ../${{ github.event.inputs.PATCH_NAME }}
-          else
-            echo "正在生成正常补丁..."
-            git show ${{ github.event.inputs.COMMIT_HASH }} --no-commit-id -p > ../${{ github.event.inputs.PATCH_NAME }}
-          fi
 
-      - name: 🧹 可选：删除补丁头部 commit 信息
+          # 按 "/" 解析 commit 列表
+          IFS='/' read -ra COMMITS <<< "${{ github.event.inputs.COMMIT_HASH }}"
+
+          # 清空补丁文件
+          : > ../${{ github.event.inputs.PATCH_NAME }}
+
+          echo "Commit 顺序为：${COMMITS[*]}"
+
+          for c in "${COMMITS[@]}"; do
+            echo "=========="
+            echo "处理 Commit: $c"
+            echo "==========" 
+            
+            # 检查 Commit 是否存在
+            if ! git cat-file -e "${c}^{commit}" 2>/dev/null; then
+              echo "❌ 错误：Commit 不存在：$c"
+              exit 1
+            fi
+
+            # 按顺序追加 patch（成功才继续下一个）
+            if [ "${{ github.event.inputs.REVERSE }}" = true ]; then
+              git show -R "$c" --no-commit-id -p >> ../${{ github.event.inputs.PATCH_NAME }} || exit 1
+            else
+              git show "$c" --no-commit-id -p >> ../${{ github.event.inputs.PATCH_NAME }} || exit 1
+            fi
+
+            echo -e "\n" >> ../${{ github.event.inputs.PATCH_NAME }}
+
+            echo "✔ 已成功处理：$c"
+          done
+
+      - name: 🧹 删除 commit 头部信息 (可选)
         if: ${{ github.event.inputs.CLEAN_HEADER }}
         run: |
           sed -i '/^commit /,/^diff --git /{ /^diff --git /!d }' ${{ github.event.inputs.PATCH_NAME }}
