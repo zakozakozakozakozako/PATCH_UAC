@@ -1,0 +1,64 @@
+name: Download sched_ext Folder
+
+on:
+  workflow_dispatch:
+    inputs:
+      FILE_LINK:
+        description: "输入 GitHub 文件夹链接（tree/.../.../vendor/oplus/kernel/cpu/sched_ext）"
+        required: true
+        default: "https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8850/tree/oneplus/sm8850_b_16.0.0_oneplus_15/vendor/oplus/kernel/cpu/sched_ext"
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Parse repo URL / branch / folder
+      id: parse
+      run: |
+        LINK="${{ github.event.inputs.FILE_LINK }}"
+
+        # 1. 仓库地址
+        REPO_URL="$(echo "$LINK" | sed -E 's|/tree/.*||')"
+        echo "repo-url=$REPO_URL" >> $GITHUB_OUTPUT
+
+        # 2. 分支名称
+        BRANCH="$(echo "$LINK" | sed -E 's|.*/tree/([^/]+)/.*|\1|')"
+        echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+        # 3. 子目录路径
+        SUBDIR="$(echo "$LINK" | sed -E 's|.*/tree/[^/]+/(.*)|\1|')"
+        echo "subdir=$SUBDIR" >> $GITHUB_OUTPUT
+
+    - name: Show parsed info
+      run: |
+        echo "Repo:   ${{ steps.parse.outputs.repo-url }}"
+        echo "Branch: ${{ steps.parse.outputs.branch }}"
+        echo "Folder: ${{ steps.parse.outputs.subdir }}"
+
+    - name: Sparse checkout target folder
+      run: |
+        git clone --no-checkout "${{ steps.parse.outputs.repo-url }}.git" source
+        cd source
+
+        git fetch origin "${{ steps.parse.outputs.branch }}"
+
+        git sparse-checkout init --cone
+        git sparse-checkout set "${{ steps.parse.outputs.subdir }}"
+
+        git checkout "${{ steps.parse.outputs.branch }}"
+
+    - name: Copy folder to workspace
+      run: |
+        TARGET_DIR="$(basename ${{ steps.parse.outputs.subdir }})"
+
+        mkdir -p downloaded
+        cp -r source/${{ steps.parse.outputs.subdir }} downloaded/${TARGET_DIR}
+
+        echo "Downloaded folder saved to ./downloaded/${TARGET_DIR}"
+
+    - name: Upload as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sched_ext_folder
+        path: downloaded
