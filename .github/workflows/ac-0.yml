@@ -1,10 +1,10 @@
-name: Make Patch From GitHub Folder
+name: Make Patch From GitHub Folder (Auto Branch Detect)
 
 on:
   workflow_dispatch:
     inputs:
       FOLDER_URL:
-        description: "输入 GitHub 文件夹链接 (tree/...路径)"
+        description: "输入 GitHub 文件夹链接"
         required: true
 
 jobs:
@@ -12,43 +12,52 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Parse URL
-        id: parse
+      - name: Decode and extract repo + after_tree
+        id: parse1
         run: |
           raw="${{ github.event.inputs.FOLDER_URL }}"
-
-          # 解码URL（把 %2F 变成 /）
           decoded=$(echo -e "${raw//%/\\x}")
 
           echo "Decoded URL: $decoded"
 
-          # 仓库 owner/repo
           repo=$(echo "$decoded" | sed -E 's#https://github.com/([^/]+/[^/]+)/.*#\1#')
-
-          # cutoff：tree/ 后面的字符串
           after_tree=$(echo "$decoded" | sed -E 's#.*/tree/(.*)#\1#')
 
-          # branch 是 after_tree 的第一段
-          branch=$(echo "$after_tree" | cut -d'/' -f1)
-
-          # 路径是 after_tree 去掉 branch/
-          dir=$(echo "$after_tree" | sed -E "s#^${branch}/##")
-
           echo "repo=$repo" >> $GITHUB_OUTPUT
-          echo "branch=$branch" >> $GITHUB_OUTPUT
+          echo "after_tree=$after_tree" >> $GITHUB_OUTPUT
+
+      - name: Detect correct branch
+        id: branchdetect
+        run: |
+          repo="${{ steps.parse1.outputs.repo }}"
+          after_tree="${{ steps.parse1.outputs.after_tree }}"
+
+          # 取 tree 后的所有字段，直到匹配到真实的分支
+          for i in 1 2 3 4 5 6 7; do
+            try=$(echo "$after_tree" | cut -d'/' -f1-$i)
+            echo "Trying branch: $try"
+
+            if git ls-remote --heads https://github.com/$repo.git "$try" &>/dev/null; then
+              echo "Found branch: $try"
+              echo "branch=$try" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          done
+
+          echo "No matching branch found!"
+          exit 1
+
+      - name: Extract directory
+        id: parse_dir
+        run: |
+          dir=$(echo "${{ steps.parse1.outputs.after_tree }}" | sed -E "s#^${{ steps.branchdetect.outputs.branch }}/##")
           echo "dir=$dir" >> $GITHUB_OUTPUT
 
-      - name: Print parsed
-        run: |
-          echo "Repository: ${{ steps.parse.outputs.repo }}"
-          echo "Branch:     ${{ steps.parse.outputs.branch }}"
-          echo "Directory:  ${{ steps.parse.outputs.dir }}"
-
-      - name: Clone source repo
+      - name: Clone repo
         run: |
           git clone --depth=1 \
-            -b "${{ steps.parse.outputs.branch }}" \
-            "https://github.com/${{ steps.parse.outputs.repo }}.git" \
+            -b "${{ steps.branchdetect.outputs.branch }}" \
+            "https://github.com/${{ steps.parse1.outputs.repo }}.git" \
             src_repo
 
       - name: Generate patch
@@ -57,7 +66,7 @@ jobs:
           cd work
           git init
 
-          cp -r ../src_repo/${{ steps.parse.outputs.dir }} ./folder
+          cp -r ../src_repo/${{ steps.parse_dir.outputs.dir }} ./folder
 
           git add folder
           git diff --cached > ../output.patch
@@ -65,5 +74,5 @@ jobs:
       - name: Upload patch
         uses: actions/upload-artifact@v4
         with:
-          name: output-patch
+          name: patch-output
           path: output.patch
