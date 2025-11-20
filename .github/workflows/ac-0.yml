@@ -1,10 +1,10 @@
-name: Download GitHub Folder (Any Folder Auto Fetch)
+name: Download GitHub Folder (sched_ext or any folder)
 
 on:
   workflow_dispatch:
     inputs:
       FILE_LINK:
-        description: "请输入 GitHub 文件夹链接 (tree/<branch>/<path>)"
+        description: "请输入 GitHub 文件夹链接 (tree/<branch>/<folder>)"
         required: true
         default: "https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8850/tree/oneplus/sm8850_b_16.0.0_oneplus_15/vendor/oplus/kernel/cpu/sched_ext"
 
@@ -13,32 +13,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Parse repo, branch and subdir
+    - name: Parse repo URL, branch, folder
       id: parse
       run: |
         LINK="${{ github.event.inputs.FILE_LINK }}"
         echo "Input link: $LINK"
 
-        #### 解析仓库 URL ####
+        #### 1. 仓库 URL ####
         REPO_URL="$(echo "$LINK" | sed -E 's|/tree/.*||')"
         echo "repo-url=$REPO_URL" >> $GITHUB_OUTPUT
 
-        #### 提取 tree 后部分 ####
+        #### 2. tree 后部分 (branch + folder) ####
         AFTER_TREE="$(echo "$LINK" | sed -E 's|.*tree/||')"
 
-        #### 分支名称 = tree 后 第一段 ####
-        BRANCH="$(echo "$AFTER_TREE" | cut -d'/' -f1)"
+        #### 3. 自动获取 branch（匹配 oneplus/* 直到遇到 vendor/） ####
+        # 例：oneplus/sm8850_b_16.0.0_oneplus_15/vendor/oplus/...
+        BRANCH="$(echo "$AFTER_TREE" | sed -E 's|(vendor/.*)||')"
+        BRANCH="${BRANCH%/}" # 去掉多余斜杠
 
-        #### 子目录路径（去掉 branch/）####
-        SUBDIR="$(echo "$AFTER_TREE" | sed -E "s|^[^/]*/||")"
+        #### 4. folder 是 branch 后面的路径 ####
+        SUBDIR="$(echo "$AFTER_TREE" | sed -E "s|^$BRANCH/||")"
 
         echo "branch=$BRANCH" >> $GITHUB_OUTPUT
         echo "subdir=$SUBDIR" >> $GITHUB_OUTPUT
 
-        echo "--- Parsed ---"
-        echo "Repo URL: $REPO_URL"
-        echo "Branch:   $BRANCH"
-        echo "Folder:   $SUBDIR"
+        echo "--- Parsed Result ---"
+        echo "Repo  : $REPO_URL"
+        echo "Branch: $BRANCH"
+        echo "Folder: $SUBDIR"
 
     - name: Sparse checkout folder
       run: |
@@ -46,20 +48,21 @@ jobs:
         BRANCH="${{ steps.parse.outputs.branch }}"
         SUBDIR="${{ steps.parse.outputs.subdir }}"
 
-        echo "Cloning $REPO (no checkout)..."
+        echo "Cloning repo: $REPO"
         git clone --no-checkout "$REPO.git" source
         cd source
 
         echo "Fetching branch: $BRANCH"
         git fetch origin "$BRANCH"
 
+        echo "Enable sparse checkout: $SUBDIR"
         git sparse-checkout init --cone
         git sparse-checkout set "$SUBDIR"
 
         echo "Checking out..."
         git checkout "$BRANCH"
 
-    - name: Copy folder to output
+    - name: Copy out folder
       run: |
         SUBDIR="${{ steps.parse.outputs.subdir }}"
         DIR_NAME=$(basename "$SUBDIR")
@@ -67,9 +70,9 @@ jobs:
         mkdir -p downloaded
         cp -r source/"$SUBDIR" "downloaded/$DIR_NAME"
 
-        echo "Saved to ./downloaded/$DIR_NAME"
+        echo "Exported to: downloaded/$DIR_NAME"
 
-    - name: Upload artifact
+    - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: downloaded-folder
