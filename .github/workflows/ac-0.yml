@@ -1,15 +1,15 @@
-name: Make Patch from GitHub Folder
+name: Make Patch From GitHub Folder
 
 on:
   workflow_dispatch:
     inputs:
       FOLDER_URL:
-        description: "输入 GitHub 文件夹链接（必须是 tree/... 路径）"
+        description: "输入 GitHub 文件夹链接 (tree/...路径)"
         required: true
-        default: "https://github.com/zakozakozakozakozako/android_kernel_modules_and_devicetree_oneplus_sm8850/tree/oneplus/sm8850_b_16.0.0_oneplus_15/vendor/oplus/kernel/cpu/sched_ext"
+        default: "https://github.com/zakozakozakozakozako/android_kernel_modules_and_devicetree_oneplus_sm8850/tree/oneplus%2Fsm8850_b_16.0.0_oneplus_15/vendor/oplus/kernel/cpu/sched_ext"
 
 jobs:
-  make-patch:
+  gen-patch:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,39 +17,45 @@ jobs:
         id: parse
         run: |
           url="${{ github.event.inputs.FOLDER_URL }}"
+          
+          # 解码 URL (%2F -> /)
+          decoded_url=$(printf "%b" "${url//%/\\x}")
+          
+          echo "Decoded URL: $decoded_url"
 
-          # 提取 repo，例如 zakozakozakozakozako/android_kernel_modules...
-          REPO=$(echo "$url" | sed -E 's#https://github.com/([^/]+/[^/]+)/.*#\1#')
+          # 提取 repo
+          REPO=$(echo "$decoded_url" | sed -E 's#https://github.com/([^/]+/[^/]+)/.*#\1#')
 
-          # 提取 branch
-          BRANCH=$(echo "$url" | sed -E 's#.*/tree/([^/]+)/.*#\1#')
+          # 提取 branch（tree 后面下一段）
+          BRANCH=$(echo "$decoded_url" | sed -E 's#.*/tree/([^/]+)/.*#\1#')
 
           # 提取目录路径
-          DIR=$(echo "$url" | sed -E 's#.*/tree/[^/]+/(.*)#\1#')
+          DIR=$(echo "$decoded_url" | sed -E 's#.*/tree/[^/]+/(.*)#\1#')
 
           echo "repo=$REPO" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           echo "dir=$DIR" >> $GITHUB_OUTPUT
 
-      - name: Show parsed info
+      - name: Show parsed values
         run: |
-          echo "Repository: ${{ steps.parse.outputs.repo }}"
-          echo "Branch:     ${{ steps.parse.outputs.branch }}"
-          echo "Directory:  ${{ steps.parse.outputs.dir }}"
+          echo "Repository : ${{ steps.parse.outputs.repo }}"
+          echo "Branch     : ${{ steps.parse.outputs.branch }}"
+          echo "Directory  : ${{ steps.parse.outputs.dir }}"
 
       - name: Clone repo
         run: |
-          git clone --depth=1 -b "${{ steps.parse.outputs.branch }}" \
+          git clone --depth=1 \
+            -b "${{ steps.parse.outputs.branch }}" \
             "https://github.com/${{ steps.parse.outputs.repo }}.git" \
             src_repo
 
-      - name: Create patch workspace
+      - name: Prepare workspace
         run: |
           mkdir patch_workspace
           cd patch_workspace
           git init
 
-          # 复制输入链接中指定的目录
+          # 复制要生成 patch 的目录
           cp -r ../src_repo/${{ steps.parse.outputs.dir }} ./folder
 
           git add folder
@@ -58,5 +64,5 @@ jobs:
       - name: Upload patch
         uses: actions/upload-artifact@v4
         with:
-          name: github-folder-patch
+          name: patch-output
           path: output.patch
